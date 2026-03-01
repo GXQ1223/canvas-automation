@@ -958,6 +958,9 @@ async function openCanvas() {
     page = await context.newPage();
   }
 
+  // Set default timeout to 3 minutes (Canvas can be slow)
+  page.setDefaultTimeout(180000);
+
   console.log(`Opening Canvas at: ${CANVAS_URL}`);
   await page.goto(CANVAS_URL);
   await page.waitForLoadState('networkidle');
