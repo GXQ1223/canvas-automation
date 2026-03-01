@@ -683,7 +683,7 @@ async function runQuiz(questions, notePath, transcript, videoTitle, progress, mo
 
         // Pause before next question (unless it's the last one)
         if (i < requiredCorrect - 1) {
-          await askQuestion('Press ENTER for next question...');
+          await waitForEnter('Press ENTER for next question...');
         }
         continue;
       }
@@ -724,7 +724,7 @@ async function runQuiz(questions, notePath, transcript, videoTitle, progress, mo
 
       // Pause before next question (unless it's the last one)
       if (i < requiredCorrect - 1) {
-        await askQuestion('Press ENTER for next question...');
+        await waitForEnter('Press ENTER for next question...');
       }
 
       // Convert answer to string for results

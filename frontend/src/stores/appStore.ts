@@ -76,8 +76,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => {
       // Split output by newlines and filter empty lines
       const newLines = output.split('\n').filter(line => line.trim())
+
+      // Filter out duplicate consecutive lines and progress bar spam
+      const currentOutput = state.cliOutput
+      const filteredNew = newLines.filter((line, i) => {
+        // Skip if same as last line in current output
+        if (i === 0 && currentOutput.length > 0 && line === currentOutput[currentOutput.length - 1]) {
+          return false
+        }
+        // Skip if same as previous new line
+        if (i > 0 && line === newLines[i - 1]) {
+          return false
+        }
+        return true
+      })
+
       return {
-        cliOutput: [...state.cliOutput.slice(-500), ...newLines], // Keep last 500 lines
+        cliOutput: [...currentOutput.slice(-500), ...filteredNew],
       }
     }),
   clearCliOutput: () => set({ cliOutput: [] }),

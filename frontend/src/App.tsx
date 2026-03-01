@@ -153,8 +153,8 @@ function App() {
           }
         }
 
-        // Clear questions when video completes or quiz starts
-        if (output.includes('Mark as done') || output.includes('QUIZ TIME')) {
+        // Clear questions when video completes (NOT when quiz starts - we need them!)
+        if (output.includes('Mark as done')) {
           clearQuizQuestions()
           outputBufferRef.current = []
         }

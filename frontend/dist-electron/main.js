@@ -178,6 +178,9 @@ function createWindow() {
     });
     electron_1.ipcMain.handle('cli:isRunning', () => cliRunner?.isRunning() ?? false);
     electron_1.ipcMain.handle('cli:sendInput', (_, input) => {
+        console.log('[Main] cli:sendInput received:', JSON.stringify(input));
+        console.log('[Main] cliRunner exists:', !!cliRunner);
+        console.log('[Main] cliRunner.isRunning:', cliRunner?.isRunning());
         cliRunner?.sendInput(input);
         return true;
     });

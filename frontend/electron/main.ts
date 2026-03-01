@@ -192,6 +192,9 @@ function createWindow() {
   ipcMain.handle('cli:isRunning', () => cliRunner?.isRunning() ?? false)
 
   ipcMain.handle('cli:sendInput', (_, input: string) => {
+    console.log('[Main] cli:sendInput received:', JSON.stringify(input))
+    console.log('[Main] cliRunner exists:', !!cliRunner)
+    console.log('[Main] cliRunner.isRunning:', cliRunner?.isRunning())
     cliRunner?.sendInput(input)
     return true
   })

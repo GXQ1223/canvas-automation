@@ -19,7 +19,7 @@ class CliRunner {
         this.process = (0, child_process_1.spawn)('node', [scriptPath, ...args], {
             cwd: this.projectRoot,
             env: { ...process.env },
-            shell: true,
+            stdio: ['pipe', 'pipe', 'pipe'], // Explicitly set stdin/stdout/stderr as pipes
         });
         this.process.stdout?.on('data', (data) => {
             onOutput(data.toString());
@@ -46,8 +46,16 @@ class CliRunner {
         return this.process !== null;
     }
     sendInput(input) {
+        console.log('[CliRunner] sendInput called:', JSON.stringify(input));
+        console.log('[CliRunner] process exists:', !!this.process);
+        console.log('[CliRunner] stdin exists:', !!this.process?.stdin);
+        console.log('[CliRunner] stdin writable:', this.process?.stdin?.writable);
         if (this.process?.stdin) {
-            this.process.stdin.write(input);
+            const result = this.process.stdin.write(input);
+            console.log('[CliRunner] write result:', result);
+        }
+        else {
+            console.log('[CliRunner] No stdin available!');
         }
     }
 }
