@@ -39,10 +39,33 @@ import {
   QUIZ_SETTINGS
 } from './progress.js';
 
-dotenv.config();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load configuration from config.json (frontend) or .env (legacy)
+const CONFIG_PATH = path.join(__dirname, '..', 'config.json');
+let configFromJson = {};
+
+if (fs.existsSync(CONFIG_PATH)) {
+  try {
+    configFromJson = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    console.log('Loaded config from config.json');
+  } catch (e) {
+    console.log('Warning: Could not parse config.json, falling back to .env');
+  }
+}
+
+// Fall back to .env for any missing values
+dotenv.config();
+
+// Helper to get config value (config.json takes priority over .env)
+function getConfig(jsonKey, envKey, defaultValue = '') {
+  if (configFromJson[jsonKey] !== undefined && configFromJson[jsonKey] !== '') {
+    return configFromJson[jsonKey];
+  }
+  return process.env[envKey] || defaultValue;
+}
+
 const DONE_LIST_PATH = path.join(__dirname, '..', 'done_list.txt');
 const NOTES_DIR = path.join(__dirname, '..', 'notes');
 const HOMEWORK_DIR = path.join(__dirname, '..', 'homework');
@@ -52,15 +75,22 @@ if (!fs.existsSync(NOTES_DIR)) {
   fs.mkdirSync(NOTES_DIR, { recursive: true });
 }
 
-const CANVAS_URL = process.env.CANVAS_URL || 'https://canvas.upenn.edu/courses/';
-const CANVAS_USERNAME = process.env.CANVAS_USERNAME;
-const CANVAS_PASSWORD = process.env.CANVAS_PASSWORD;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const GPT_QUESTION = process.env.GPT_QUESTION;
-const CANVAS_COURSE_NAME = process.env.CANVAS_COURSE_NAME || 'CIS 5300 - Spring 2026';
-const CHROME_USER_DATA_DIR = process.env.CHROME_USER_DATA_DIR;
-const CHROME_PROFILE = process.env.CHROME_PROFILE || 'Default';
+// Configuration values (config.json takes priority)
+const CANVAS_URL = getConfig('canvasUrl', 'CANVAS_URL', 'https://canvas.upenn.edu/courses/');
+const CANVAS_USERNAME = getConfig('username', 'CANVAS_USERNAME');
+const CANVAS_PASSWORD = process.env.CANVAS_PASSWORD; // Always from env/keychain for security
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY; // Always from env/keychain for security
+const GPT_QUESTION = getConfig('gptContext', 'GPT_QUESTION');
+const CANVAS_COURSE_NAME = getConfig('courseName', 'CANVAS_COURSE_NAME', 'CIS 5300 - Spring 2026');
+const CHROME_USER_DATA_DIR = getConfig('chromeProfilePath', 'CHROME_USER_DATA_DIR');
+const CHROME_PROFILE = getConfig('chromeProfileName', 'CHROME_PROFILE', 'Default');
 const SKIP_LIST_PATH = path.join(__dirname, '..', 'skip_list.txt');
+
+// Study settings from config.json
+const STUDY_LIMIT_CONFIG = configFromJson.studyLimit;
+const BREAK_DURATION_CONFIG = configFromJson.breakDuration;
+const QUIZ_TIME_LIMIT_CONFIG = configFromJson.quizTimeLimit;
+const PLAYBACK_SPEED_CONFIG = configFromJson.playbackSpeed;
 
 // Initialize OpenAI client
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
@@ -90,10 +120,10 @@ const sessionStats = {
   studyStartTime: Date.now()  // When current study session started (resets after break)
 };
 
-// Break settings (in minutes)
+// Break settings (in minutes) - can be overridden by config.json
 const BREAK_SETTINGS = {
-  STUDY_LIMIT: 45,   // Force break after 45 min of studying (video + quiz)
-  BREAK_DURATION: 10 // 10 min break
+  STUDY_LIMIT: STUDY_LIMIT_CONFIG || 45,   // Force break after X min of studying (video + quiz)
+  BREAK_DURATION: BREAK_DURATION_CONFIG || 10 // X min break
 };
 
 // Get current study time in minutes
@@ -129,10 +159,40 @@ function waitForEnter(prompt) {
 }
 
 // Force a break with countdown timer
+async function getBreakActivity() {
+  if (!openai) return 'Stand up, stretch, and hydrate!';
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{
+        role: 'system',
+        content: `You suggest fun, short physical break activities for a student who's been studying.
+Give ONE activity in a single enthusiastic sentence. Examples of the vibe:
+- "Let's do 10 pushups!"
+- "Let's do some burpees! Get that heart pumping!"
+- "Do 20 jumping jacks to get the blood flowing!"
+Be creative and different each time. Include exercises, stretches, hydration reminders, breathing exercises, etc. Keep it to 1 sentence.`
+      }, {
+        role: 'user',
+        content: 'Suggest a quick break activity.'
+      }],
+      max_tokens: 60,
+      temperature: 1.2
+    });
+    return response.choices[0].message.content.trim();
+  } catch {
+    return 'Stand up, stretch, and hydrate!';
+  }
+}
+
 async function forceBreak(durationMin) {
+  const activity = await getBreakActivity();
   console.log('\n' + '='.repeat(55));
   console.log(`BREAK TIME! You've been studying for ${BREAK_SETTINGS.STUDY_LIMIT} min.`);
-  console.log(`Take a ${durationMin} minute break. Stand up, stretch, hydrate!`);
+  console.log(`Take a ${durationMin} minute break.`);
+  console.log('');
+  console.log(`  >> ${activity}`);
+  console.log('');
   console.log('='.repeat(55));
 
   const breakMs = durationMin * 60 * 1000;
@@ -395,17 +455,30 @@ function getHomework(moduleNumber) {
   }
 }
 
-// Generate homework-focused quiz questions (3 questions)
+// Generate homework-focused quiz questions (1 per 400 words, min 3, max 8)
+// Research shows 1-2 questions per minute of video keeps focus; ~150 words/min speaking rate
 async function generateQuiz(transcript, videoTitle, relevantSections = []) {
   if (!OPENAI_API_KEY || !transcript || transcript.length < 50) {
     return null;
   }
 
-  console.log('\nGenerating homework-focused questions...');
+  // Calculate number of questions based on word count (1 per 400 words, min 3, max 8)
+  // This equals roughly 1 question per 2-3 minutes of video
+  const wordCount = transcript.split(/\s+/).length;
+  const questionCount = Math.min(8, Math.max(3, Math.ceil(wordCount / 400)));
+
+  console.log(`\nGenerating ${questionCount} questions (${wordCount} words)...`);
 
   const sectionsContext = relevantSections.length > 0
     ? `This video helps with:\n${relevantSections.map(s => `- Section ${s.id}: ${s.title}`).join('\n')}`
     : '';
+
+  // Build Q format examples based on question count
+  const qExamples = Array.from({ length: questionCount }, (_, i) =>
+    `Q${i + 1}: ${i % 2 === 0 ? 'YES' : 'NO'}: Example question ${i + 1}?`
+  ).join('\n');
+
+  const qList = Array.from({ length: questionCount }, (_, i) => `Q${i + 1}:`).join(', ');
 
   try {
     const response = await openai.chat.completions.create({
@@ -413,20 +486,19 @@ async function generateQuiz(transcript, videoTitle, relevantSections = []) {
       messages: [
         {
           role: 'system',
-          content: `Create exactly 3 Yes/No questions. Each question must have ONLY ONE correct answer.
+          content: `Create exactly ${questionCount} Yes/No questions. Each question must have ONLY ONE correct answer.
 
 OUTPUT FORMAT - follow EXACTLY:
-Q1: YES: Is the sky blue?
-Q2: NO: Is 2+2 equal to 5?
-Q3: YES: Does water boil at 100 degrees Celsius?
+${qExamples}
 
 RULES:
-- Start each line with Q1:, Q2:, Q3:
+- Start each line with ${qList}
 - After the colon, write YES: or NO: to indicate the correct answer
 - Then write the question
-- You MUST include at least one YES and at least one NO answer
+- Mix YES and NO answers (not all the same!)
 - Make questions that test understanding, not trivia
-- Include tricky questions where the intuitive answer might be wrong`
+- Include tricky questions where the intuitive answer might be wrong
+- Space questions throughout the content - cover beginning, middle, and end`
         },
         {
           role: 'user',
@@ -435,12 +507,12 @@ RULES:
 LECTURE: ${videoTitle}
 
 TRANSCRIPT:
-${transcript.substring(0, 3000)}
+${transcript.substring(0, 6000)}
 
-Create 3 homework-focused Y/N questions.`
+Create ${questionCount} homework-focused Y/N questions covering the entire lecture.`
         }
       ],
-      max_tokens: 400
+      max_tokens: 100 * questionCount
     });
 
     const questionsText = response.choices[0].message.content;
@@ -556,7 +628,7 @@ Start with: ${isCorrect ? '"Nice!"' : `"Nope - ${correctAnswerStr}."`}`
   }
 }
 
-// Run interactive quiz (3 questions) with retry until all correct
+// Run interactive quiz with retry until all correct
 async function runQuiz(questions, notePath, transcript, videoTitle, progress, moduleNumber, relevantSections, sessionStats) {
   if (!questions || questions.length === 0) return 0;
 
@@ -721,12 +793,18 @@ async function askGPT(transcript, videoTitle, relevantSections = []) {
       messages: [
         {
           role: 'system',
-          content: `Give a TIGHT summary. Max 5 bullet points.
-Format:
-- **Key thing**: one-liner explanation
-- **Watch out**: common gotcha
+          content: `You're a hype-man for learning. Make this lecture EXCITING.
 
-End with "DO THIS:" - 2-3 action items max. No fluff. Be direct.`
+Use these hook styles for each bullet:
+- "Plot twist:" - something counterintuitive
+- "Here's the secret:" - insider knowledge feel
+- "Mind-blown moment:" - surprising connection
+- "The trap everyone falls into:" - common mistake to avoid
+- "Pro move:" - what experts do differently
+
+Max 4 bullets. Each bullet = 1 punchy sentence.
+
+End with "YOUR MISSION:" - 1-2 specific actions. Make it feel like a game quest, not homework.`
         },
         {
           role: 'user',
@@ -1084,34 +1162,12 @@ async function openCanvas() {
     return relevant;
   }
 
-  // ========== INFINITE VIDEO LOOP ==========
-  while (true) {
-    // Refresh done list and skip list each iteration
-    const doneList = getDoneList();
-    const skipList = getSkipList();
+  // ========== SCRAPE ALL VIDEOS ONCE ==========
+  console.log('Loading video list from Modules page...');
+  await page.evaluate(() => window.scrollBy(0, 800));
+  await page.waitForTimeout(2000);
 
-    // Go back to modules page
-    console.log('\n' + '='.repeat(55));
-    console.log(`Finding next video... | ${breakClock()}`);
-    console.log(`Videos completed: ${doneList.length}`);
-    console.log('='.repeat(55));
-
-    // Click Modules link (we're already logged in)
-    try {
-      await page.click('a:has-text("Modules")');
-      await page.waitForLoadState('networkidle');
-    } catch (e) {
-      // If that fails, try going back via browser
-      await page.goBack();
-      await page.waitForLoadState('networkidle');
-      await page.click('a:has-text("Modules")');
-      await page.waitForLoadState('networkidle');
-    }
-
-    await page.evaluate(() => window.scrollBy(0, 800));
-    await page.waitForTimeout(2000);
-
-  // Get all video items (filter out non-lecture content)
+  // Get all video items ONCE (filter out non-lecture content)
   const allVideos = await page.evaluate(() => {
     const moduleItems = document.querySelectorAll('li.context_module_item');
     const videos = [];
@@ -1156,7 +1212,20 @@ async function openCanvas() {
     return videos;
   });
 
-    // Find first incomplete video
+  console.log(`Found ${allVideos.length} videos in Modules`);
+
+  // ========== INFINITE VIDEO LOOP ==========
+  while (true) {
+    // Refresh done list and skip list each iteration (fast - local file reads)
+    const doneList = getDoneList();
+    const skipList = getSkipList();
+
+    console.log('\n' + '='.repeat(55));
+    console.log(`Finding next video... | ${breakClock()}`);
+    console.log(`Videos completed: ${doneList.length}`);
+    console.log('='.repeat(55));
+
+    // Find first incomplete video from cached list (fast - in-memory filter)
     // In QUICK mode, prefer shorter videos
     let incompleteItemData = null;
 
@@ -1285,7 +1354,7 @@ async function openCanvas() {
       notePath = result.notePath;
     }
 
-    // Generate 3 homework-focused questions
+    // Generate quiz questions based on video length
     quizQuestions = await generateQuiz(transcript, incompleteItemData.title, relevantSections);
 
     if (quizQuestions && quizQuestions.length > 0) {
@@ -1297,7 +1366,7 @@ async function openCanvas() {
         console.log(`   ${i + 1}. ${questionText}`);
       });
       console.log('\nYou\'ll answer these Yes/No questions after the video.');
-      console.log('ALL 3 must be correct to pass! (Mix of Yes and No answers)');
+      console.log(`ALL ${quizQuestions.length} must be correct to pass! (Mix of Yes and No answers)`);
       console.log('='.repeat(55));
     }
 
@@ -1547,7 +1616,7 @@ async function openCanvas() {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(1000);
 
-  // Run quiz (3 questions, all must be correct)
+  // Run quiz (all questions must be correct)
   if (quizQuestions && quizQuestions.length > 0) {
     await runQuiz(quizQuestions, notePath, transcript, incompleteItemData.title, progress, currentModule, relevantSections, sessionStats);
   }

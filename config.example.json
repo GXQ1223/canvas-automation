@@ -1,0 +1,15 @@
+{
+  "canvasUrl": "https://canvas.upenn.edu/courses/",
+  "username": "your_username",
+  "courseName": "CIS 5300 - Spring 2026",
+  "twoFactorMethod": "2fa_sms",
+  "twoFactorPhone": "",
+  "gptContext": "Describe your current homework/project here",
+  "studyLimit": 45,
+  "breakDuration": 10,
+  "quizTimeLimit": 30,
+  "playbackSpeed": 1.5,
+  "chromeProfilePath": "",
+  "chromeProfileName": "Default",
+  "telegramChatId": ""
+}
