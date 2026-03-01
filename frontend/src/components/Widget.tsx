@@ -63,6 +63,32 @@ export function Widget({ onOpenSettings, onOpenNotes }: WidgetProps) {
     }
   }, [cliOutput])
 
+  // Keyboard shortcuts for CLI interaction
+  useEffect(() => {
+    if (!cliRunning) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't capture if user is typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return
+      }
+
+      if (e.key === '1') {
+        e.preventDefault()
+        window.electronAPI?.cli.sendInput('1')
+      } else if (e.key === '2') {
+        e.preventDefault()
+        window.electronAPI?.cli.sendInput('2')
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        window.electronAPI?.cli.sendInput('\n')
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [cliRunning])
+
   // Reset quiz answers when new questions arrive
   useEffect(() => {
     setQuizAnswers({})
@@ -184,19 +210,24 @@ export function Widget({ onOpenSettings, onOpenNotes }: WidgetProps) {
           <div className="terminal-output" ref={terminalRef} style={{ height: terminalHeight }}>
             {(() => {
               const lines = cliOutput.slice(-50)
-              // Find the last countdown bar line
-              let lastCountdownIdx = -1
+              // Check if line is a progress bar (countdown or video progress)
+              const isProgressBar = (line: string) =>
+                line.includes('█') || line.includes('░') ||
+                (line.includes('[') && line.includes(']') && (line.includes('#') || line.includes('-')) && line.includes('/'))
+
+              // Find the last progress bar line
+              let lastProgressIdx = -1
               lines.forEach((line, i) => {
-                if (line.includes('█') || line.includes('░')) {
-                  lastCountdownIdx = i
+                if (isProgressBar(line)) {
+                  lastProgressIdx = i
                 }
               })
-              // Filter: keep only last countdown bar, skip duplicates
+              // Filter: keep only last progress bar, skip duplicates
               return lines
                 .filter((line, i, arr) => {
-                  // Only keep the LAST countdown bar
-                  if (line.includes('█') || line.includes('░')) {
-                    return i === lastCountdownIdx
+                  // Only keep the LAST progress bar
+                  if (isProgressBar(line)) {
+                    return i === lastProgressIdx
                   }
                   // Skip consecutive duplicate lines
                   if (i > 0 && line === arr[i - 1]) {
