@@ -1,8 +1,12 @@
 import fs from 'fs';
 import path from 'path';
+import https from 'https';
 import { fileURLToPath } from 'url';
 import { loadProgress, getHomeworkProgress, getAccuracy } from './progress.js';
 import { parseHomework } from './homework-analyzer.js';
+
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,6 +15,36 @@ const REPORTS_DIR = path.join(__dirname, '..', 'reports');
 // Create reports directory if it doesn't exist
 if (!fs.existsSync(REPORTS_DIR)) {
   fs.mkdirSync(REPORTS_DIR, { recursive: true });
+}
+
+/**
+ * Send a report to Telegram via Bot API
+ * @param {string} text - Message text (Markdown)
+ * @returns {Promise<boolean>} Whether the send succeeded
+ */
+export function sendTelegramReport(text) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    const payload = JSON.stringify({
+      chat_id: TELEGRAM_CHAT_ID,
+      text,
+      parse_mode: 'Markdown'
+    });
+
+    const req = https.request({
+      hostname: 'api.telegram.org',
+      path: `/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+    }, (res) => {
+      resolve(res.statusCode === 200);
+    });
+
+    req.on('error', () => resolve(false));
+    req.write(payload);
+    req.end();
+  });
 }
 
 /**
@@ -133,6 +167,11 @@ export function generateDailyReport(sessionStats = {}) {
   // Also save as latest.md for easy access
   const latestPath = path.join(REPORTS_DIR, 'latest.md');
   fs.writeFileSync(latestPath, report);
+
+  // Push to Telegram if configured
+  sendTelegramReport(report).then(sent => {
+    if (sent) console.log('Report sent to Telegram!');
+  });
 
   return { report, filePath };
 }

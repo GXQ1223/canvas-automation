@@ -57,6 +57,10 @@ const CANVAS_USERNAME = process.env.CANVAS_USERNAME;
 const CANVAS_PASSWORD = process.env.CANVAS_PASSWORD;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const GPT_QUESTION = process.env.GPT_QUESTION;
+const CANVAS_COURSE_NAME = process.env.CANVAS_COURSE_NAME || 'CIS 5300 - Spring 2026';
+const CHROME_USER_DATA_DIR = process.env.CHROME_USER_DATA_DIR;
+const CHROME_PROFILE = process.env.CHROME_PROFILE || 'Default';
+const SKIP_LIST_PATH = path.join(__dirname, '..', 'skip_list.txt');
 
 // Initialize OpenAI client
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
@@ -67,9 +71,12 @@ const MODE = {
   HW: args.includes('--hw'),
   QUICK: args.includes('--quick'),
   STATUS: args.includes('--status'),
-  REPORT: args.includes('--report')
+  REPORT: args.includes('--report'),
+  SKIP: args.includes('--skip')
 };
 const weekNumber = args.find(a => !a.startsWith('--') && !isNaN(parseInt(a)));
+const moduleFlag = args.find(a => a.startsWith('--module='));
+const moduleOverride = moduleFlag ? parseInt(moduleFlag.split('=')[1]) : null;
 
 // Session stats tracking
 const sessionStats = {
@@ -326,6 +333,34 @@ function markAsDone(videoTitle) {
   if (!isVideoDone(videoTitle, doneList)) {
     fs.appendFileSync(DONE_LIST_PATH, `${normalizeTitle(videoTitle)}\n`);
     console.log(`\nVIDEO COMPLETE: ${normalizeTitle(videoTitle)}`);
+  }
+}
+
+// Read skip list
+function getSkipList() {
+  try {
+    const content = fs.readFileSync(SKIP_LIST_PATH, 'utf-8');
+    return content.split('\n')
+      .filter(line => line.trim() && !line.startsWith('#'))
+      .map(line => normalizeTitle(line));
+  } catch (e) {
+    return [];
+  }
+}
+
+// Check if video is in skip list
+function isVideoSkipped(videoTitle, skipList) {
+  const normalizedTitle = normalizeTitle(videoTitle);
+  return skipList.some(skip => normalizeTitle(skip) === normalizedTitle);
+}
+
+// Add video to skip list
+function addToSkipList(videoTitle) {
+  const skipList = getSkipList();
+  const normalized = normalizeTitle(videoTitle);
+  if (!skipList.includes(normalized)) {
+    fs.appendFileSync(SKIP_LIST_PATH, `${normalized}\n`);
+    console.log(`\nSKIPPED: ${normalized}`);
   }
 }
 
@@ -857,7 +892,10 @@ async function openCanvas() {
 
   // Load progress
   const progress = loadProgress();
-  const currentModule = getCurrentModule();
+  const currentModule = moduleOverride || getCurrentModule();
+  if (moduleOverride) {
+    console.log(`Module override: targeting Module ${moduleOverride}`);
+  }
   progress.currentModule = currentModule;
 
   // Parse homework
@@ -901,9 +939,24 @@ async function openCanvas() {
 
   // Launch browser
   console.log('\nLaunching browser...');
-  const browser = await chromium.launch({ headless: false });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  let browser = null;
+  let context;
+  let page;
+
+  if (CHROME_USER_DATA_DIR) {
+    console.log(`Using Chrome profile: ${CHROME_PROFILE} from ${CHROME_USER_DATA_DIR}`);
+    const userDataDir = CHROME_USER_DATA_DIR.replace(/^~/, process.env.HOME);
+    context = await chromium.launchPersistentContext(userDataDir, {
+      headless: false,
+      channel: 'chrome',
+      args: [`--profile-directory=${CHROME_PROFILE}`]
+    });
+    page = context.pages()[0] || await context.newPage();
+  } else {
+    browser = await chromium.launch({ headless: false });
+    context = await browser.newContext();
+    page = await context.newPage();
+  }
 
   console.log(`Opening Canvas at: ${CANVAS_URL}`);
   await page.goto(CANVAS_URL);
@@ -977,9 +1030,9 @@ async function openCanvas() {
   console.log('Canvas loaded!');
 
   // Navigate to course
-  console.log('Opening CIS 5300...');
+  console.log(`Opening ${CANVAS_COURSE_NAME}...`);
   try {
-    await page.click('a:has-text("CIS 5300 - Spring 2026")');
+    await page.click(`a:has-text("${CANVAS_COURSE_NAME}")`);
     await page.waitForLoadState('networkidle');
     console.log('Course opened!');
   } catch (e) {
@@ -1030,8 +1083,9 @@ async function openCanvas() {
 
   // ========== INFINITE VIDEO LOOP ==========
   while (true) {
-    // Refresh done list each iteration
+    // Refresh done list and skip list each iteration
     const doneList = getDoneList();
+    const skipList = getSkipList();
 
     // Go back to modules page
     console.log('\n' + '='.repeat(55));
@@ -1105,7 +1159,7 @@ async function openCanvas() {
 
     if (MODE.QUICK) {
       // Sort by duration, pick shortest incomplete
-      const incompleteVideos = allVideos.filter(v => !isVideoDone(v.title, doneList));
+      const incompleteVideos = allVideos.filter(v => !isVideoDone(v.title, doneList) && !isVideoSkipped(v.title, skipList));
       incompleteVideos.sort((a, b) => {
         const timeA = a.title.match(/\((\d+):(\d+)\)/) || [0, 99, 99];
         const timeB = b.title.match(/\((\d+):(\d+)\)/) || [0, 99, 99];
@@ -1113,7 +1167,14 @@ async function openCanvas() {
       });
       incompleteItemData = incompleteVideos[0];
     } else {
-      incompleteItemData = allVideos.find(video => !isVideoDone(video.title, doneList));
+      incompleteItemData = allVideos.find(video => !isVideoDone(video.title, doneList) && !isVideoSkipped(video.title, skipList));
+    }
+
+    // --skip flag: skip the first incomplete video and move to next
+    if (MODE.SKIP && incompleteItemData) {
+      addToSkipList(incompleteItemData.title);
+      console.log(`Skipped: ${incompleteItemData.title}`);
+      continue;
     }
 
     if (!incompleteItemData) {
@@ -1126,7 +1187,8 @@ async function openCanvas() {
       const { filePath } = generateDailyReport(sessionStats);
       console.log(`\nFinal report saved: ${filePath}`);
 
-      await browser.close();
+      if (browser) await browser.close();
+      else await context.close();
       process.exit(0);
     }
 
@@ -1294,7 +1356,24 @@ async function openCanvas() {
 
   // Set playback speed to 1.5x
   console.log('Setting 1.5x speed...');
+  let speedSet = false;
+
+  // Try direct playbackRate first (most reliable)
   if (panoptoFrame) {
+    try {
+      speedSet = await panoptoFrame.evaluate(() => {
+        const v = document.querySelector('video');
+        if (v) { v.playbackRate = 1.5; return true; }
+        return false;
+      });
+      if (speedSet) console.log('1.5x speed set via playbackRate!');
+    } catch (e) {
+      // Fall through to UI method
+    }
+  }
+
+  // Fallback: use UI controls
+  if (!speedSet && panoptoFrame) {
     try {
       await panoptoFrame.evaluate(() => {
         const btn = document.querySelector('[aria-label="Settings"]') || document.querySelector('.settings-button');
@@ -1311,7 +1390,7 @@ async function openCanvas() {
           }
         }
       });
-      console.log('1.5x speed set!');
+      console.log('1.5x speed set via UI!');
     } catch (e) {
       // Silent
     }
