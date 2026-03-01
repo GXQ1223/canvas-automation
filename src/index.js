@@ -657,7 +657,13 @@ async function runQuiz(questions, notePath, transcript, videoTitle, progress, mo
       const questionText = q.text || q; // Handle both new format and fallback
       const correctAnswer = q.correctAnswer ?? null;
 
-      console.log(`\nQ${i + 1}: ${questionText}`);
+      // Show question prominently
+      console.log('');
+      console.log('═'.repeat(55));
+      console.log(`  QUESTION ${i + 1} of ${requiredCorrect}`);
+      console.log('═'.repeat(55));
+      console.log(`  ${questionText}`);
+      console.log('─'.repeat(55));
 
       // Timed question
       const { answer, responseTime, timedOut } = await askTimedQuestion('', QUIZ_SETTINGS.TIME_LIMIT);
@@ -666,11 +672,19 @@ async function runQuiz(questions, notePath, transcript, videoTitle, progress, mo
         // Record timeout - show correct answer
         recordQuizAnswer(progress, false, responseTime, true);
         const correctStr = correctAnswer ? 'Yes' : 'No';
-        console.log('-'.repeat(50));
-        console.log(`⏰ TIME OUT! The correct answer was: ${correctStr}`);
-        console.log('-'.repeat(50));
+        console.log('');
+        console.log('╔═══════════════════════════════════════════════════╗');
+        console.log('║               ⏰ TIME OUT!                        ║');
+        console.log('╚═══════════════════════════════════════════════════╝');
+        console.log(`The correct answer was: ${correctStr}`);
+        console.log('─'.repeat(55));
         results.push({ question: questionText, answer: 'TIMEOUT', responseTime, correct: false });
         sessionStats.questionsAnswered++;
+
+        // Pause before next question (unless it's the last one)
+        if (i < requiredCorrect - 1) {
+          await askQuestion('Press ENTER for next question...');
+        }
         continue;
       }
 
@@ -690,12 +704,28 @@ async function runQuiz(questions, notePath, transcript, videoTitle, progress, mo
       if (isCorrect) sessionStats.questionsCorrect++;
       sessionStats.xpEarned += xpEarned;
 
-      console.log('-'.repeat(50));
+      // Show result prominently
+      console.log('');
+      if (isCorrect) {
+        console.log('╔═══════════════════════════════════════════════════╗');
+        console.log('║                  ✓ CORRECT!                       ║');
+        console.log('╚═══════════════════════════════════════════════════╝');
+      } else {
+        console.log('╔═══════════════════════════════════════════════════╗');
+        console.log('║                  ✗ WRONG!                         ║');
+        console.log('╚═══════════════════════════════════════════════════╝');
+      }
+      console.log('');
       console.log(explanation);
       if (speedBonus > 0) {
         console.log(`Speed bonus: +${speedBonus} XP`);
       }
-      console.log('-'.repeat(50));
+      console.log('─'.repeat(55));
+
+      // Pause before next question (unless it's the last one)
+      if (i < requiredCorrect - 1) {
+        await askQuestion('Press ENTER for next question...');
+      }
 
       // Convert answer to string for results
       const answerStr = answer === null ? 'Skip' : (answer ? 'Yes' : 'No');

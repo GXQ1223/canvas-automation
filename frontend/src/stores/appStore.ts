@@ -73,9 +73,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   setReports: (reports) => set({ reports }),
   setCliRunning: (cliRunning) => set({ cliRunning }),
   appendCliOutput: (output) =>
-    set((state) => ({
-      cliOutput: [...state.cliOutput.slice(-500), output], // Keep last 500 lines
-    })),
+    set((state) => {
+      // Split output by newlines and filter empty lines
+      const newLines = output.split('\n').filter(line => line.trim())
+      return {
+        cliOutput: [...state.cliOutput.slice(-500), ...newLines], // Keep last 500 lines
+      }
+    }),
   clearCliOutput: () => set({ cliOutput: [] }),
   setCurrentPage: (currentPage) => set({ currentPage }),
   setQuizQuestions: (questions, videoTitle) => set({

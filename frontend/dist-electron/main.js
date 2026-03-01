@@ -17,7 +17,7 @@ const isDev = process.env.NODE_ENV === 'development' || !electron_1.app.isPackag
 const projectRoot = path_1.default.join(__dirname, '..', '..');
 // Widget dimensions
 const WIDGET_WIDTH = 280;
-const WIDGET_HEIGHT = 500;
+const WIDGET_HEIGHT = 650;
 function createWindow() {
     // Get screen dimensions to position widget on right edge
     const { screen } = require('electron');

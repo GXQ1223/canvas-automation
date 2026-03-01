@@ -16,7 +16,7 @@ const projectRoot = path.join(__dirname, '..', '..')
 
 // Widget dimensions
 const WIDGET_WIDTH = 280
-const WIDGET_HEIGHT = 500
+const WIDGET_HEIGHT = 650
 
 function createWindow() {
   // Get screen dimensions to position widget on right edge

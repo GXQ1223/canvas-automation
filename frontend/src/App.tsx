@@ -14,39 +14,49 @@ function parseQuizQuestions(output: string): { questions: { number: number; text
   const questions: { number: number; text: string }[] = []
   let inQuizSection = false
   let videoTitle: string | undefined
+  const seenQuestions = new Set<number>()
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim()
+    const line = lines[i]
+    const trimmed = line.trim()
 
     // Detect start of quiz section
-    if (line.includes('FOCUS WHILE WATCHING:')) {
+    if (trimmed.includes('FOCUS WHILE WATCHING')) {
       inQuizSection = true
       continue
     }
 
     // Detect end of quiz section
-    if (inQuizSection && line.includes("You'll answer these")) {
+    if (inQuizSection && (trimmed.includes("You'll answer") || trimmed.includes("ALL") && trimmed.includes("must be correct"))) {
       break
     }
 
-    // Parse question lines (format: "   1. Question text")
+    // Parse question lines (format: "   1. Question text" or "1. Question")
     if (inQuizSection) {
-      const match = line.match(/^(\d+)\.\s+(.+)$/)
+      // Match lines like "   1. Question text" or "1. Question"
+      const match = trimmed.match(/^(\d+)\.\s+(.+)$/)
       if (match) {
-        questions.push({
-          number: parseInt(match[1]),
-          text: match[2]
-        })
+        const num = parseInt(match[1])
+        // Avoid duplicates
+        if (!seenQuestions.has(num)) {
+          seenQuestions.add(num)
+          questions.push({
+            number: num,
+            text: match[2].trim()
+          })
+        }
       }
     }
 
     // Try to capture video title from "Processing: Title" line
-    if (line.startsWith('Processing:')) {
-      videoTitle = line.replace('Processing:', '').trim()
+    if (trimmed.startsWith('Processing:')) {
+      videoTitle = trimmed.replace('Processing:', '').trim()
     }
   }
 
   if (questions.length > 0) {
+    // Sort by question number
+    questions.sort((a, b) => a.number - b.number)
     return { questions, videoTitle }
   }
   return null
@@ -126,23 +136,21 @@ function App() {
       window.electronAPI.cli.onOutput((output) => {
         appendCliOutput(output)
 
-        // Buffer output and check for quiz questions
-        outputBufferRef.current.push(output)
-        // Keep last 50 lines for parsing
-        if (outputBufferRef.current.length > 50) {
-          outputBufferRef.current = outputBufferRef.current.slice(-50)
+        // Buffer output - split by newlines and add each line
+        const newLines = output.split('\n').filter(line => line.trim())
+        outputBufferRef.current.push(...newLines)
+        // Keep last 100 lines for parsing
+        if (outputBufferRef.current.length > 100) {
+          outputBufferRef.current = outputBufferRef.current.slice(-100)
         }
 
-        // Check for quiz questions in buffered output (only if we see the section header)
-        if (output.includes('FOCUS WHILE WATCHING:')) {
-          // Wait a bit for all question lines to arrive, then parse
-          setTimeout(() => {
-            const fullOutput = outputBufferRef.current.join('\n')
-            const parsed = parseQuizQuestions(fullOutput)
-            if (parsed && parsed.questions.length > 0) {
-              setQuizQuestions(parsed.questions, parsed.videoTitle)
-            }
-          }, 500)
+        // Check for quiz questions in buffered output
+        const fullBuffer = outputBufferRef.current.join('\n')
+        if (fullBuffer.includes('FOCUS WHILE WATCHING:')) {
+          const parsed = parseQuizQuestions(fullBuffer)
+          if (parsed && parsed.questions.length > 0) {
+            setQuizQuestions(parsed.questions, parsed.videoTitle)
+          }
         }
 
         // Clear questions when video completes or quiz starts

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAppStore } from '../stores/appStore'
 import { StudyClock } from './StudyClock'
 import {
@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import './Widget.css'
 
-const EXPANDED_HEIGHT = 500
+const EXPANDED_HEIGHT = 650
 const COLLAPSED_HEIGHT = 44
 const WIDGET_WIDTH = 280
 
@@ -40,77 +40,148 @@ export function Widget({ onOpenSettings, onOpenNotes }: WidgetProps) {
   const [alwaysOnTop, setAlwaysOnTop] = useState(false)
   const [quizAnswers, setQuizAnswers] = useState<Record<number, 'yes' | 'no' | null>>({})
   const [quizMode, setQuizMode] = useState<'view' | 'answer'>('view')
+  const [quizActive, setQuizActive] = useState(false) // Track if quiz is in progress
+  const [quizHeight, setQuizHeight] = useState(200) // Resizable quiz section height
+  const [isResizing, setIsResizing] = useState(false)
 
   // Parse CLI output for status
   const parseCliStatus = () => {
-    const recentOutput = cliOutput.slice(-30).join('\n')
-    const lines = cliOutput.slice(-30)
+    const lines = cliOutput.slice(-50)
 
-    let status = 'Idle'
+    let status = 'Running...'
     let currentStep = ''
     let quizProgress = ''
     let videoName = ''
+    let currentQuestion = ''
 
-    for (const line of lines.reverse()) {
-      // Video processing
+    // Find video name from recent output
+    for (const line of lines) {
       if (line.includes('Processing:')) {
         videoName = line.replace('Processing:', '').trim()
-        status = 'Processing video'
-        break
       }
-      // Analyzing
-      if (line.includes('Analyzing lecture')) {
-        status = 'Analyzing content'
-        break
-      }
-      // Generating questions
-      if (line.includes('Generating homework-focused')) {
-        status = 'Generating quiz'
-        break
-      }
-      // Starting video
-      if (line.includes('Starting video')) {
-        status = 'Playing video'
-        break
-      }
-      // Quiz time
-      if (line.includes('QUIZ TIME') || line.includes('Question')) {
-        const match = line.match(/Question (\d+)\/(\d+)/)
-        if (match) {
-          quizProgress = `${match[1]}/${match[2]}`
-          status = 'Quiz in progress'
-        } else {
-          status = 'Quiz time'
-        }
-        break
-      }
-      // Correct/Wrong
-      if (line.includes('CORRECT') || line.includes('WRONG')) {
-        status = line.includes('CORRECT') ? 'Correct!' : 'Wrong!'
-        break
-      }
-      // Break
-      if (line.includes('BREAK TIME') || line.includes('break')) {
-        status = 'Break time'
-        break
-      }
-      // Waiting for input
-      if (line.includes('Press ENTER')) {
+    }
+
+    // Find current status (check most recent lines first)
+    for (const line of [...lines].reverse()) {
+      // Skip empty lines
+      if (!line.trim()) continue
+
+      // Waiting for input - highest priority
+      if (line.includes('Press ENTER') || line.includes('press ENTER')) {
         status = 'Waiting for input'
         currentStep = line.includes('start video') ? 'Ready to play' : 'Press Enter'
         break
       }
-      // Login
-      if (line.includes('Logging in') || line.includes('2FA')) {
+      // Quiz question prompt (1/2/3 or Y/N)
+      if (line.includes('1) Yes') || line.includes('2) No') || line.includes('3) Skip')) {
+        status = 'Answer now!'
+        // Look for the question text in previous lines
+        for (let j = lines.indexOf(line) - 1; j >= 0 && j >= lines.indexOf(line) - 10; j--) {
+          const prevLine = lines[j]
+          // Match "QUESTION X of Y" line
+          const qMatch = prevLine.match(/QUESTION (\d+) of (\d+)/)
+          if (qMatch) {
+            quizProgress = `Q${qMatch[1]}/${qMatch[2]}`
+            // The question text should be 2 lines after
+            if (j + 2 < lines.length) {
+              currentQuestion = lines[j + 2].trim()
+            }
+            break
+          }
+        }
+        break
+      }
+      if (line.includes('(Y/N)') || line.includes('(y/n)')) {
+        status = 'Answer Y/N'
+        break
+      }
+      // Quiz time / Question
+      if (line.includes('QUIZ TIME')) {
+        status = 'Quiz time'
+        break
+      }
+      if (line.match(/Question \d+/)) {
+        const match = line.match(/Question (\d+)\/(\d+)/)
+        if (match) {
+          quizProgress = `${match[1]}/${match[2]}`
+        }
+        status = 'Quiz in progress'
+        break
+      }
+      // Correct/Wrong answers (match the new prominent format)
+      if (line.includes('✓ CORRECT')) {
+        status = 'Correct!'
+        break
+      }
+      if (line.includes('✗ WRONG')) {
+        status = 'Wrong!'
+        break
+      }
+      // Video states
+      if (line.includes('Starting video') || line.includes('Playing')) {
+        status = 'Playing video'
+        break
+      }
+      if (line.includes('Video complete') || line.includes('finished')) {
+        status = 'Video complete'
+        break
+      }
+      // Processing states
+      if (line.includes('Generating') && line.includes('questions')) {
+        status = 'Generating quiz'
+        break
+      }
+      if (line.includes('Analyzing') || line.includes('KEY INSIGHTS')) {
+        status = 'Analyzing content'
+        break
+      }
+      if (line.includes('Extracting transcript') || line.includes('transcript')) {
+        status = 'Getting transcript'
+        break
+      }
+      if (line.includes('Processing:') || line.includes('Found incomplete')) {
+        status = 'Processing video'
+        break
+      }
+      // Navigation
+      if (line.includes('Navigating') || line.includes('Loading')) {
+        status = 'Navigating...'
+        break
+      }
+      if (line.includes('Modules page') || line.includes('modules')) {
+        status = 'Loading modules'
+        break
+      }
+      // Login/Auth
+      if (line.includes('Logging in') || line.includes('Login')) {
         status = 'Logging in'
+        break
+      }
+      if (line.includes('2FA') || line.includes('verification')) {
+        status = '2FA verification'
+        break
+      }
+      // Break
+      if (line.includes('BREAK') || line.includes('Take a break')) {
+        status = 'Break time'
+        break
+      }
+      // Mark as done
+      if (line.includes('Mark as done') || line.includes('Marking')) {
+        status = 'Marking complete'
+        break
+      }
+      // FOCUS WHILE WATCHING
+      if (line.includes('FOCUS WHILE WATCHING')) {
+        status = 'Review questions'
         break
       }
     }
 
-    return { status, currentStep, quizProgress, videoName }
+    return { status, currentStep, quizProgress, videoName, currentQuestion }
   }
 
-  const cliStatus = cliRunning ? parseCliStatus() : { status: 'Ready', currentStep: '', quizProgress: '', videoName: '' }
+  const cliStatus = cliRunning ? parseCliStatus() : { status: 'Ready', currentStep: '', quizProgress: '', videoName: '', currentQuestion: '' }
 
   // Load always-on-top state
   useEffect(() => {
@@ -146,13 +217,41 @@ export function Widget({ onOpenSettings, onOpenNotes }: WidgetProps) {
     window.electronAPI?.window.close()
   }
 
-  // Reset quiz answers when new questions arrive
+  // Track the last set of questions we've seen
+  const [lastQuizKey, setLastQuizKey] = useState('')
+
+  // Reset quiz answers only when questions actually change (new video)
   useEffect(() => {
     if (currentQuizQuestions.length > 0) {
-      setQuizAnswers({})
-      setQuizMode('view')
+      // Create a key from the questions to detect actual changes
+      const newKey = currentQuizQuestions.map(q => q.text).join('|')
+      if (newKey !== lastQuizKey) {
+        setQuizAnswers({})
+        setQuizMode('view')
+        setLastQuizKey(newKey)
+      }
     }
-  }, [currentQuizQuestions])
+  }, [currentQuizQuestions, lastQuizKey])
+
+  // Track quiz active state from CLI output
+  useEffect(() => {
+    if (cliOutput.length === 0) return
+
+    const recentOutput = cliOutput.slice(-20).join('\n')
+
+    // Quiz starts when we see "QUIZ" or question prompt
+    if (recentOutput.includes('QUIZ') || recentOutput.includes('1) Yes')) {
+      setQuizActive(true)
+    }
+
+    // Quiz ends when we see result or video starts
+    if (recentOutput.includes('PERFECT!') ||
+        recentOutput.includes('RETRY NEEDED') ||
+        recentOutput.includes('Starting video') ||
+        recentOutput.includes('Mark as done')) {
+      setQuizActive(false)
+    }
+  }, [cliOutput])
 
   const handleQuizAnswer = (questionNum: number, answer: 'yes' | 'no') => {
     setQuizAnswers(prev => ({ ...prev, [questionNum]: answer }))
@@ -182,8 +281,40 @@ export function Widget({ onOpenSettings, onOpenNotes }: WidgetProps) {
     window.electronAPI?.cli.sendInput(input + '\n')
   }
 
+  // For quiz - send single keypress without newline
+  const handleSendKey = (key: string) => {
+    window.electronAPI?.cli.sendInput(key)
+  }
+
+  // Resize handlers for quiz section
+  const resizeRef = useRef<{ startY: number; startHeight: number } | null>(null)
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+    resizeRef.current = { startY: e.clientY, startHeight: quizHeight }
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizeRef.current) return
+      const delta = e.clientY - resizeRef.current.startY
+      const newHeight = Math.max(100, Math.min(400, resizeRef.current.startHeight + delta))
+      setQuizHeight(newHeight)
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      resizeRef.current = null
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [quizHeight])
+
   // Check if CLI is waiting for input
   const isWaitingForInput = cliStatus.status === 'Waiting for input' || cliStatus.currentStep.includes('Enter')
+  const isWaitingForQuizAnswer = cliStatus.status === 'Answer now!' || cliStatus.status === 'Answer Y/N' || cliStatus.status === 'Quiz in progress'
 
   const level = progress ? Math.floor(progress.xp / 500) + 1 : 1
   const streak = progress?.streak ?? 0
@@ -262,6 +393,16 @@ export function Widget({ onOpenSettings, onOpenNotes }: WidgetProps) {
           {cliStatus.currentStep && (
             <div className="status-step">{cliStatus.currentStep}</div>
           )}
+          {/* Show current quiz question */}
+          {cliStatus.currentQuestion && (
+            <div className="status-question">{cliStatus.currentQuestion}</div>
+          )}
+          {/* Debug: show last line of output */}
+          {cliOutput.length > 0 && (
+            <div className="status-debug" style={{ fontSize: '10px', color: '#888', marginTop: '4px' }}>
+              [{cliOutput.length}] {cliOutput[cliOutput.length - 1]?.substring(0, 50)}...
+            </div>
+          )}
 
           {/* Input buttons */}
           {isWaitingForInput && (
@@ -270,14 +411,17 @@ export function Widget({ onOpenSettings, onOpenNotes }: WidgetProps) {
             </button>
           )}
 
-          {/* Quiz answer buttons */}
-          {cliStatus.status === 'Quiz in progress' && (
+          {/* Quiz answer buttons (1=Yes, 2=No, 3=Skip) - send single keypress */}
+          {(quizActive || isWaitingForQuizAnswer) && (
             <div className="quiz-input-buttons">
-              <button className="input-btn yes" onClick={() => handleSendInput('y')}>
-                Yes (Y)
+              <button className="input-btn yes" onClick={() => handleSendKey('1')}>
+                1) Yes
               </button>
-              <button className="input-btn no" onClick={() => handleSendInput('n')}>
-                No (N)
+              <button className="input-btn no" onClick={() => handleSendKey('2')}>
+                2) No
+              </button>
+              <button className="input-btn skip" onClick={() => handleSendKey('3')}>
+                3) Skip
               </button>
             </div>
           )}
@@ -297,7 +441,7 @@ export function Widget({ onOpenSettings, onOpenNotes }: WidgetProps) {
           {currentVideoTitle && (
             <div className="quiz-video-title">{currentVideoTitle}</div>
           )}
-          <div className="quiz-questions">
+          <div className="quiz-questions" style={{ maxHeight: quizHeight }}>
             {currentQuizQuestions.map((q) => (
               <div key={q.number} className="quiz-question-item">
                 <div className="quiz-question">
@@ -331,6 +475,13 @@ export function Widget({ onOpenSettings, onOpenNotes }: WidgetProps) {
               Answers locked! See how you did in the CLI quiz.
             </div>
           )}
+          {/* Resize handle */}
+          <div
+            className={`quiz-resize-handle ${isResizing ? 'active' : ''}`}
+            onMouseDown={handleResizeStart}
+          >
+            <div className="resize-grip" />
+          </div>
         </div>
       )}
 
