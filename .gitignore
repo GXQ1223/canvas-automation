@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Environment variables (contains credentials!)
+.env
+
+# User-specific data (don't share your progress)
+done_list.txt
+progress.json
+notes/
+reports/
+homework/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / Tools
+.vscode/
+.idea/
+.claude/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+
+# Build
+dist/
+build/

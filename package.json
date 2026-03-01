@@ -1,0 +1,28 @@
+{
+  "name": "canvas-automation",
+  "version": "1.0.0",
+  "description": "Playwright automation for Canvas LMS video playback with Gemini integration",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "hw": "node src/index.js --hw",
+    "quick": "node src/index.js --quick",
+    "status": "node src/index.js --status",
+    "report": "node src/index.js --report",
+    "test": "echo \"No tests configured\" && exit 0"
+  },
+  "keywords": [
+    "playwright",
+    "canvas",
+    "automation",
+    "gemini"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "openai": "^6.16.0",
+    "playwright": "^1.40.0"
+  }
+}
